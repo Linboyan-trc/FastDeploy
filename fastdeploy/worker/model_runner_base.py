@@ -27,18 +27,29 @@ from fastdeploy.worker.output import ModelRunnerOutput
 logger = get_logger("model_runner_base", "model_runner_base.log")
 
 
+# 1. dataclass作用
+# 1.1 快速将一个类变成具有__init__(), __repr__(), __eq__()方法的类，成为一种专用于表示数据的类
+# 1.2 有了@dataclass装饰器之后只需要声明需要的成员变量及其类型，就可以自动具有__init__(), __repr__(), __eq__()方法
+# 1.3 这个类是分布式执行时的输入状态信息
 @dataclass
 class DistributedStatus:
+    # 1.1 当前是否处于decode阶段
+    # 1.2 MoE切成多少chunk
     only_decode: bool = True
     moe_num_chunk: int = 1
 
 
+# 2. dataclass作用
+# 2.1 分布式执行后返回给调度层的信息
 @dataclass
 class DistributedOut:
+    # 2.1 是否只执行了 decode
+    # 2.2 实际使用了多少 MoE chunk
     if_only_decode: bool = True
     max_moe_num_chunk: Optional[int] = None
 
 
+# 3. 执行单卡推理的Worker
 class ModelRunnerBase(ABC):
     """
     Engine -> (WIP)Executor -> Worker -> ModelRunner -> Model
@@ -46,6 +57,7 @@ class ModelRunnerBase(ABC):
     contain input preparation, token generation, and tokenprocessing.
     """
 
+    # 3.1 初始化，获取模型配置、加载配置、设备配置
     def __init__(self, fd_config: FDConfig, device: str) -> None:
         """
         Initialize FDConfig
@@ -64,6 +76,7 @@ class ModelRunnerBase(ABC):
 
         self.device = device
 
+    # 3.2 子类需要实现加载模型、获取模型、执行推理、分析推理
     @abstractmethod
     def load_model(self) -> None:
         """

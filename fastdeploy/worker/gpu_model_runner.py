@@ -112,7 +112,9 @@ from fastdeploy.worker.model_runner_base import (
 from fastdeploy.worker.output import LogprobsTensors, ModelOutputData, ModelRunnerOutput
 
 
+# 1. 执行单卡推理的Worker
 class GPUModelRunner(ModelRunnerBase):
+    # 1.1 初始化
     def __init__(
         self,
         fd_config: FDConfig,
@@ -121,18 +123,34 @@ class GPUModelRunner(ModelRunnerBase):
         rank: int,
         local_rank: int,
     ):
+        # 1.1 获取模型配置、加载配置、设备配置
         super().__init__(fd_config=fd_config, device=device)
         self.MAX_INFER_SEED = 9223372036854775806
         self.enable_mm = self.model_config.enable_mm
+
+        # 1.2 分布式身份
+        # 1.2.1 rank是全局rank
+        # 1.2.2 local_rank是当前节点rank
+        # 1.2.3 device_id是物理GPU id
         self.rank = rank
         self.local_rank = local_rank
         self.device_id = device_id
+
+        # 1.3 Speculative Decoding 相关
         self.speculative_method = self.fd_config.speculative_config.method
         self.speculative_decoding = self.speculative_method is not None
+
+        # 1.4 Logprob/Early Stop/Pooling
+        # 1.4.1 logprobs返回top-k token的logprob
+        # 1.4.2 early_stop是提前终止
+        # 1.4.3 pooling是embedding模型
         self.enable_logprob = fd_config.model_config.enable_logprob
         self.enable_early_stop = self.fd_config.early_stop_config.enable_early_stop
         self.is_pooling_model = self.fd_config.model_config.runner_type == "pooling"
+        
         self.ori_vocab_size = self.fd_config.model_config.ori_vocab_size
+
+        # 1.5 Logprob最大数量控制Logprob 中间状态缓存
         self.max_logprobs = None
         if self.enable_logprob:
             self.max_logprobs = (
@@ -144,11 +162,16 @@ class GPUModelRunner(ModelRunnerBase):
         self.top_p_normalized_logprobs = True
         self.prompt_logprobs_reqs: dict[str, Request] = {}
         self.in_progress_prompt_logprobs: dict[str, LogprobsTensors] = {}
+        
+        # 1.6 Forward批次缓存
         self.forward_batch_reqs_list: list[Request] = [None for _ in range(self.scheduler_config.max_num_seqs)]
+        
+        # 1.7 KV Cache相关
         self.cache_kvs_map: dict = {}
         self.exist_prefill_flag = False
 
         # VL model config:
+        # 1.8 多模态初始化
         if self.enable_mm:
             if "ernie" in self.fd_config.model_config.model_type:
                 self._init_image_preprocess()
