@@ -427,29 +427,14 @@ class ModelRegistry:
         return False
 
 
+# 1. 模型基类
 class ModelForCasualLM(nn.Layer, ABC):
-    """
-    Base class for LM
-    """
-
     def __init__(self, configs):
-        """
-        Args:
-            configs (dict): Configurations including parameters such as max_dec_len, min_dec_len, decode_strategy,
-                vocab_size, use_topp_sampling, etc.
-        """
         super(ModelForCasualLM, self).__init__()
         self.fd_config = configs
 
     @abstractmethod
     def set_state_dict(self, state_dict: Dict[str, Union[np.ndarray, paddle.Tensor]]):
-        """
-        Load model parameters from a given state dictionary.
-        Args:
-            state_dict (dict[str, np.ndarray | paddle.Tensor]):
-                A dictionary containing model parameters, where keys are parameter names
-                and values are NumPy arrays or PaddlePaddle tensors.
-        """
         raise NotImplementedError
 
     @abstractmethod
@@ -459,15 +444,6 @@ class ModelForCasualLM(nn.Layer, ABC):
         pos_emb=None,
         **model_kwargs,
     ):
-        """
-        Defines the forward pass of the model for generating text.
-        Args:
-            input_ids (Tensor, optional): The input token ids to the model.
-            pos_emb (Tensor, optional): position Embeddings for model.
-            **model_kwargs: Additional keyword arguments for the model.
-        Returns:
-            Tensor or list of Tensors: Generated tokens or decoded outputs.
-        """
         raise NotImplementedError
 
     @abstractmethod

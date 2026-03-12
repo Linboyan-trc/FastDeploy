@@ -94,52 +94,42 @@ class VocabParallelEmbeddingShardIndices:
         assert self.num_added_elements <= self.num_added_elements_padded
 
 
+# 1. 用于加载模型第一个参数embed_tokens.shape = [129280, 7168]
 class VocabParallelEmbedding(nn.Layer):
-    """
-    VocabParallelEmbedding Layer
-    """
-
+    # 1.1 初始化
+    # 1.1.1 配置
+    # 1.1.2 num_embeddings = 129280单词数量，embedding_dim = 7168每个词向量的维度
+    # 1.1.3 params_dtype = "bfloat16"词表每个元素的类型，prefix是"deepseek_v3.embed_tokens"
+    # 1.1.4 padding_size, org_num_embeddings, general不知道有什么用
     def __init__(
-        self,
-        fd_config: FDConfig,
-        num_embeddings: int,
-        embedding_dim: int = 768,
-        params_dtype: str = "bfloat16",
-        prefix="",
-        padding_size: int = DEFAULT_VOCAB_PADDING_SIZE,
-        org_num_embeddings: int | None = None,
-        general=False,
+        self, fd_config: FDConfig,
+        num_embeddings: int, embedding_dim: int = 768,
+        params_dtype: str = "bfloat16", prefix="",
+        padding_size: int = DEFAULT_VOCAB_PADDING_SIZE, org_num_embeddings: int | None = None, general=False,
     ) -> None:
-        """
-        Initialize the VocabParallelEmbedding layer for the model.
-
-        Args:
-            fd_config (FDConfig): Arguments related to inference, containing
-                attributes such as weight_dtype, act_dtype, mp_size, hidden_size, head_dim,
-                num_attention_heads, and ffn_hidden_size.
-            num_embeddings (int)  : vocabulary size.
-            embedding_dim (int) : size of hidden state.
-            params_dtype  (str) : data type of parameters.
-            prefix (str): The name of current layer. Defaults to "".
-        """
+        # 1.1 初始化
+        # 1.1 配置
         super().__init__()
         self.fd_config = fd_config
-        hcg = fleet.get_hybrid_communicate_group()
-        self.mp_rank: int = hcg.get_model_parallel_rank()
-        self.column_cut = False
+
+        # 1.2 词表大小
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+
+        # 1.3 看不懂
+        # 1.3 Tensor Parallel
         self.world_size: int = fd_config.parallel_config.tensor_parallel_size
         self.tensor_parallel_rank = fd_config.parallel_config.tensor_parallel_rank
         self.tp_group = fd_config.parallel_config.tp_group
+        hcg = fleet.get_hybrid_communicate_group()
+        self.mp_rank: int = hcg.get_model_parallel_rank()
+        self.column_cut = False
         self.hidden_dropout_prob: float = fd_config.model_config.hidden_dropout_prob
         self.initializer_range: float = fd_config.model_config.initializer_range
         self.max_position_embeddings: int = fd_config.model_config.max_position_embeddings
         self.tie_word_embeddings: bool = fd_config.model_config.tie_word_embeddings
         self.params_dtype: str = params_dtype
-
-        self.embedding_dim = embedding_dim
-
         self.general = general  # used for general Embedding
-        self.num_embeddings = num_embeddings
         self.padding_size = padding_size
         if self.general:
             self.org_vocab_size = num_embeddings
@@ -150,36 +140,17 @@ class VocabParallelEmbedding(nn.Layer):
             num_added_embeddings = num_embeddings - self.org_vocab_size
 
             self.org_vocab_size_padded = pad_vocab_size(self.org_vocab_size, self.padding_size)
-            self.num_embeddings_padded = pad_vocab_size(
-                self.org_vocab_size_padded + num_added_embeddings, self.padding_size
-            )
+            self.num_embeddings_padded = pad_vocab_size(self.org_vocab_size_padded + num_added_embeddings, self.padding_size)
             assert self.org_vocab_size_padded <= self.num_embeddings_padded
-        self.shard_indices = self._get_indices(
-            self.num_embeddings_padded,
-            self.org_vocab_size_padded,
-            self.num_embeddings,
-            self.org_vocab_size,
-            self.tensor_parallel_rank,
-            self.world_size,
-        )
+        self.shard_indices = self._get_indices(self.num_embeddings_padded, self.org_vocab_size_padded, self.num_embeddings, self.org_vocab_size, self.tensor_parallel_rank, self.world_size)
 
         if not self.column_cut:
-            self.embeddings = fleet.meta_parallel.VocabParallelEmbedding(
-                self.num_embeddings_padded,
-                embedding_dim,
-                mp_group=self.tp_group,
-                weight_attr=paddle.ParamAttr(
-                    initializer=nn.initializer.Normal(mean=0.0, std=self.initializer_range),
-                ),
-            )
+            self.embeddings = fleet.meta_parallel.VocabParallelEmbedding(self.num_embeddings_padded, embedding_dim, mp_group=self.tp_group, weight_attr=paddle.ParamAttr(initializer=nn.initializer.Normal(mean=0.0, std=self.initializer_range)))
             set_weight_attrs(self.embeddings.weight, {"output_dim": False})
             set_weight_attrs(self.embeddings.weight, {"weight_loader": self.weight_loader})
         else:
             # column cut embedding
-            self.embeddings = nn.Embedding(
-                num_embeddings,
-                embedding_dim // self.world_size,
-            )
+            self.embeddings = nn.Embedding(num_embeddings, embedding_dim // self.world_size)
 
             self.embeddings.weight.is_distributed = True
             self.embeddings.weight.split_axis = 1
@@ -189,18 +160,12 @@ class VocabParallelEmbedding(nn.Layer):
         self.prefix = prefix
         self.dropout = nn.Dropout(self.hidden_dropout_prob)
 
+    # 1.2 加载权重
     def load_state_dict(self, state_dict: Dict[str, paddle.Tensor | np.ndarray]):
-        """
-        Load the checkpoint state dictionary into the layer.
-
-        Args:
-            state_dict (dict): A dictionary containing the checkpoint weights and biases.
-        """
         if self.tie_word_embeddings and not self.general:
             weight_tensor = get_tensor(state_dict[self.prefix + ".weight"]).astype(paddle.get_default_dtype())
         else:
             weight_tensor = get_tensor(state_dict.pop(self.prefix + ".weight")).astype(paddle.get_default_dtype())
-
         self.embeddings.weight.set_value(weight_tensor)
 
     @classmethod
@@ -291,6 +256,7 @@ class VocabParallelEmbedding(nn.Layer):
             if param.shape[1] != shard_weight.shape[1]:
                 param[:, shard_weight.shape[1] :].fill_(0)
 
+    # 1.3 推理
     def forward(self, ids_remove_padding: paddle.Tensor = None, forward_meta: ForwardMeta = None) -> paddle.Tensor:
         """
         Defines the forward computation of the layer.

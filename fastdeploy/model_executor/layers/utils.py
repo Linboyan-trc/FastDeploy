@@ -321,20 +321,16 @@ def _set_var_distributed(var: Tensor, split_axis: int):
         main_block._find_var_recursive(var.name).is_distributed = True
 
 
+# 1. 加载张量
+# 1.1 input可以是paddle.Tensor | np.ndarray | str
 def get_tensor(input: Union[paddle.Tensor, np.ndarray, str], model_path=None) -> paddle.Tensor:
-    """
-    Return a corresponding PaddlePaddle tensor based on the type and content of the input.
-
-    Args:
-        input (Union[paddle.Tensor, np.ndarray, str]): The input data.
-
-    Returns:
-        paddle.Tensor: Returns a PaddlePaddle tensor.
-
-    """
+    # 1.1 处理PySafeSlice，懒加载
     if "PySafeSlice" in str(type(input)):
         input = input.get()
 
+    # 1.1 input已经是paddle.Tensor
+    # 1.1.1 input在cpu上，就移动到计算设备上
+    # 1.1.2 否则直接返回
     if isinstance(input, paddle.Tensor):
         if input.place.is_cpu_place():
             if current_platform.is_cuda():
@@ -342,11 +338,12 @@ def get_tensor(input: Union[paddle.Tensor, np.ndarray, str], model_path=None) ->
             else:
                 return input.to(paddle.device.get_device())
         return input
+    
+    # 1.2 其他不关注
     elif isinstance(input, np.ndarray):
         return paddle.to_tensor(input)
     elif isinstance(input, str):
         from fastdeploy.model_executor.load_weight_utils import load_reordered_experts
-
         return load_reordered_experts(model_path, input)
     else:
         return input

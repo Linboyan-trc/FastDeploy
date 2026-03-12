@@ -517,42 +517,35 @@ def load_kv_cache_scale(fd_config, state_dict):
         logger.warning(f"No kv_cache_scale.json found at {file_path}, skipping...")
 
 
+# 1. 将.safetensors文件从磁盘读取到GPU显存
 def load_composite_checkpoint(
     model_path: str,
     cls: PretrainedModel,
     fd_config: FDConfig,
     return_numpy=True,
 ):
-    """
-    # This method supports loading model weights under three parallelism strategies:
-    # 1. Expert Parallel (EP)
-    # 2. Tensor Parallel (TP)
-    # 3. Pre-sharded (pre-split)
-    """
+    # 1.1 ep_size = 1，不进入
     if fd_config.parallel_config.use_ep:
         state_dict = load_ep_checkpoint(cls, model_path, fd_config, return_numpy=True)
+    
+    # 1.2 ep_size = 1，进入
     else:
-        rank_dirs = [
-            f for f in os.listdir(model_path) if f.startswith("rank") and os.path.isdir(os.path.join(model_path, f))
-        ]
+        # 1.2.1 model-00001-of-00163，没有rank字样，不进入
+        rank_dirs = [f for f in os.listdir(model_path) if f.startswith("rank") and os.path.isdir(os.path.join(model_path, f))]
         if len(rank_dirs) > 1:
             if fd_config.parallel_config.tensor_parallel_size != len(rank_dirs):
                 raise ValueError(f"Your model only supports loading with tp{len(rank_dirs)}")
-            state_dict = load_pre_sharded_checkpoint(
-                model_path,
-                fd_config.parallel_config.tensor_parallel_rank,
-            )
+            state_dict = load_pre_sharded_checkpoint(model_path, fd_config.parallel_config.tensor_parallel_rank)
+        
+        # 1.2.2 model-00001-of-00163，没有rank字样，进入这个
+        # 1.2.2.1 这里用到的load_tp_checkpoint，来自from paddleformers.transformers.model_utils import load_tp_checkpoint，也就是paddle库自带的函数
+        # 1.2.2.2 它的作用是原封不动的将00001~00163.safetensors中的参数都读进CPU，包括量化的weight及其配套的scale_inv，也就是单纯是从.safetensors文件中读到CPU上，没有做任何反量化的操作
+        # NOTE: for very big model, cpu will be out of memory
         else:
-            fd_config.model_config.pretrained_config.use_sequence_parallel_moe = (
-                fd_config.parallel_config.use_sequence_parallel_moe
-            )
-            # NOTE: for very big model, cpu will be out of memory
-            state_dict = load_tp_checkpoint(
-                model_path,
-                cls,
-                fd_config.model_config.pretrained_config,
-                return_numpy=return_numpy,
-            )
+            fd_config.model_config.pretrained_config.use_sequence_parallel_moe = (fd_config.parallel_config.use_sequence_parallel_moe)
+            state_dict = load_tp_checkpoint(model_path, cls, fd_config.model_config.pretrained_config, return_numpy=return_numpy)
+    
+    # 1.3 加载完检查
     if not state_dict:
         raise ValueError("weight not found in state_dict !")
 

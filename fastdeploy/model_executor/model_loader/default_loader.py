@@ -51,10 +51,13 @@ class DefaultModelLoader(BaseModelLoader):
             paddle.device.empty_cache()
             paddle.device.synchronize()
 
+    # 1. 加载参数
     @measure_time()
     def load_weights(self, model, fd_config: FDConfig, architectures: str) -> None:
+        # 1.1 不知干嘛的
         model_class = ModelRegistry.get_pretrain_cls(architectures)
 
+        # 1.2 从磁盘读到GPU显存
         state_dict = load_composite_checkpoint(
             fd_config.model_config.model,
             model_class,
@@ -62,6 +65,7 @@ class DefaultModelLoader(BaseModelLoader):
             return_numpy=True,
         )
 
+        # 1.3 从GPU显存填进模型参数
         model.set_state_dict(state_dict)
         self.clean_memory_fragments(state_dict)
 
