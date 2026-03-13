@@ -607,6 +607,8 @@ class DeepseekV3ForCausalLM(ModelForCasualLM):
         # 3.2.1 第一列param_name是指在本代码中参数的key的名称
         # 3.2.2 第二列shard_name是指在.safetensors中参数的key的名称
         # 3.2.3 第三列是指该参数会和其它参数合并作为一个参数，然后该参数位于合并后的参数的前半部分，或者后半部分
+        # 3.2.3 (参数名,                权重名,                 融合后位置)
+        # 3.2.3 (param_name,           weight_name,           shard_id)
         stacked_params_mapping = [
             # 3.2.1 输入层
             # 3.2.1 模型参数中为，embed_tokens.embeddings
@@ -641,31 +643,84 @@ class DeepseekV3ForCausalLM(ModelForCasualLM):
             ("lm_head.linear",                  "lm_head",                      None), 
         ]
 
-        # (param_name, weight_name, expert_id, shard_id)
+        # 3.2 MoE，模型参数和.safetensors中参数映射
+        # 3.2.1 传入num_experts = 256
+        # 3.2.2 传入文件safetensors中参数名"gate_proj", "up_proj", "down_proj"
+        # 3.2.3 传入在本代码中对模型参数的命名"experts.up_gate_proj_", "experts.down_proj_"
+        
+        # 3.2.4 Transformer第5层，得到一个256*3的列表
+        # 1.4.2 (代码参数名,                      文件参数名,                  专家id,  分片id  )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.0.gate_proj.    ,   0,      gate   )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.0.up_proj.      ,   0,      up     )
+        # 1.4.2 (experts.down_proj_  ,          experts.0.down_proj.    ,   0,      down   )
+
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.1.gate_proj.    ,   1,      gate   )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.1.up_proj.      ,   1,      up     )
+        # 1.4.2 (experts.down_proj_  ,          experts.1.down_proj.    ,   1,      down   )
+        
+        # ...
+
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.255.gate_proj.  ,   255,    gate   )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.255.up_proj.    ,   255,    up     )
+        # 1.4.2 (experts.down_proj_  ,          experts.255.down_proj.  ,   255,    down   )
         expert_params_mapping = FusedMoE.make_expert_params_mapping(
             num_experts=self.fd_config.model_config.n_routed_experts,
             ckpt_gate_proj_name="gate_proj", ckpt_up_proj_name="up_proj", ckpt_down_proj_name="down_proj",
             param_gate_up_proj_name="experts.up_gate_proj_",  param_down_proj_name="experts.down_proj_"
         )
+
+        # 3.3 类的实例化的所有来自文件safetensors的张量，整理成[文件safetensors张量名, Paddle.Tenosr]的列表，为从CPU将张量填充到模型参数中做准备
+        # 3.3.1 self.named_parameters()方法来自Deepseek V3 For Causal LM -> Model For Causal -> nn.Layer
+        # 3.3.2 self.named_parameters()方法来自nn.Layer，是Paddle库自带的方法
         params_dict = dict(self.named_parameters())
+
+        # 3.4 一个函数，固定了部分参数
         process_weights_after_loading_fn = process_weights_after_loading(dict(self.named_sublayers()), self.fd_config)
+
+        # 3.5 遍历权重迭代器
+        # 3.5.1 权重名，权重张量
         for loaded_weight_name, loaded_weight in weights_iterator:
+            # 3.5.1 获取权重名
+            # 3.5.1 本来权重名就是model.xxx，这个replace没有作用
             logger.debug(f"Loading weight: {loaded_weight_name}")
             loaded_weight_name = loaded_weight_name.replace("deepseek_v3", "model")
+
+            # 3.5.2 遍历两个列表
+            # 3.5.2.1 对于第一次残差连接，第二次残差连接FFN，(参数名,                权重名,                          融合后位置)
+            # 3.5.2.1 对于第一次残差连接，第二次残差连接FFN，(param_name,           weight_name,                    shard_id)
+
+            # 3.5.2.2 对于第一次残差连接，第二次残差连接MoE，(代码参数名,             权重名,          专家id,         分片id  )
+            # 3.5.2.2 对于第一次残差连接，第二次残差连接MoE，(param_name,           weight_name,    experts_id,     shard_id)
+
+            # 3.5.3 对于在列表1，还有mlp.experts开头的权重，不加载
+            # 3.5.3 也就是这里加载input_layernorm, q_a_layernorm, q_b_proj, kv_a_layernorm, kv_b_proj, o_proj
+            # 3.5.3 也就是这里加载post_attention_layernorm, down_proj
+            # 3.5.3 也就是这里加载post_attention_layernorm, gate打分, 共享专家gate + up + down, 
+            # 3.5.3 也就是这里加载norm
             for param_name, weight_name, shard_id in stacked_params_mapping:
-                if weight_name not in loaded_weight_name:
-                    continue
-                if "mlp.experts." in loaded_weight_name:
-                    continue
+                # 3.5.3 对于在列表1，还有mlp.experts开头的权重，不加载
+                if weight_name not in loaded_weight_name: continue
+                if "mlp.experts." in loaded_weight_name: continue
+
+                # 3.5.3 对于要加载的权重，将weight_name替换成param_name
                 model_param_name = loaded_weight_name.replace(weight_name, param_name)
 
-                if model_param_name not in params_dict:
-                    continue
+                # 3.5.4 对于要加载的权重，必须已经在本类[文件safetensors张量名, Paddle.Tenosr]的列表中，预定义好
+                if model_param_name not in params_dict: continue
 
+                # 3.5.5 拿到预定义的Paddle.Tensor
+                # 3.5.5 如果预定义的Paddle.Tensor自带weight_loader()，就用自带的weight_loader()，否则用model_executor工具中的default_weight_loader()
+                # 3.5.5 然后从CPU填充到param上
                 param = params_dict[model_param_name]
                 weight_loader = getattr(param, "weight_loader", default_weight_loader(self.fd_config))
                 weight_loader(param, loaded_weight, shard_id)
                 break
+            
+            # 3.6 对于从迭代器读到的权重
+            # 3.6.1 上面注释好像有问题
+            # 3.6.2 应该上上面加载stack_params_mapping里的张量
+            # 3.6.2 这里第一个分支加载expert_params_mapping里的张量
+            # 3.6.3 这里第二个分支加载input_layernorm等其他张量
             else:
                 for mapping in expert_params_mapping:
                     param_name, weight_name, expert_id, shard_id = mapping

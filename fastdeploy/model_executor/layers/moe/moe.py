@@ -431,49 +431,6 @@ class FusedMoE(nn.Layer):
         elif shard_id in ["gate", "up"]:
             self._load_gate_up_weight(param, expert_id, loaded_weight, shard_id, shard_dim)
 
-    @classmethod
-    def make_expert_params_mapping(
-        cls,
-        num_experts: int,
-        ckpt_gate_proj_name: Optional[str] = None,
-        ckpt_up_proj_name: Optional[str] = None,
-        ckpt_down_proj_name: Optional[str] = None,
-        ckpt_gate_up_proj_name: Optional[str] = None,
-        param_gate_up_proj_name: Optional[str] = None,
-        param_down_proj_name: Optional[str] = None,
-        ckpt_expert_key_name: str = "experts",
-        experts_offset: int = 0,
-        num_experts_start_offset: int = 0,
-    ) -> list[tuple[str, str, int, str]]:
-        param_name_maping = []
-
-        if ckpt_gate_up_proj_name:
-            param_name_maping.append((None, ckpt_gate_up_proj_name))
-        if ckpt_gate_proj_name:
-            param_name_maping.append(("gate", ckpt_gate_proj_name))
-        if ckpt_down_proj_name:
-            param_name_maping.append(("down", ckpt_down_proj_name))
-        if ckpt_up_proj_name:
-            param_name_maping.append(("up", ckpt_up_proj_name))
-
-        return [
-            # (param_name, weight_name, expert_id, shard_id)
-            (
-                (
-                    param_gate_up_proj_name
-                    if weight_name in [ckpt_gate_proj_name, ckpt_up_proj_name, ckpt_gate_up_proj_name]
-                    else param_down_proj_name
-                ),
-                f"{ckpt_expert_key_name}.{expert_id}.{weight_name}.",
-                expert_id,
-                shard_id,
-            )
-            for expert_id in range(
-                experts_offset + num_experts_start_offset, experts_offset + num_experts_start_offset + num_experts
-            )
-            for shard_id, weight_name in param_name_maping
-        ]
-
     def load_experts_weight(
         self,
         state_dict: dict,
@@ -767,3 +724,105 @@ class FusedMoE(nn.Layer):
         """
         out = self.quant_method.apply(self, x, gate, topk_ids_hookfunc=topk_ids_hookfunc)
         return out
+
+    # 1. 类方法
+    # 1.1 是这个类的类方法
+    # 1.1 这个函数是这个类的类方法，不需要实例化这个类也能调用，一般是一种标准化的工具函数
+    # 1.1 和类的静态方法有点像，但使用条件上比静态方法宽松，可以访问这个类cls本身，而静态方法不能访问cls本身
+    # 1.2 仅用于完成MoE模型参数和.safetensors中参数映射，得到一个列表
+    @classmethod
+    def make_expert_params_mapping(
+        # 1.1 @classmethod def func(cls), 相当于def func(self)
+        cls, 
+
+        # 1.2 传入num_experts = 256
+        num_experts: int,
+
+        # 1.3 传入文件safetensors中参数名"gate_proj"
+        # 1.3 传入文件safetensors中参数名"up_proj"
+        # 1.3 传入文件safetensors中参数名"down_proj"
+        ckpt_gate_proj_name:    Optional[str] = None, 
+        ckpt_up_proj_name:      Optional[str] = None, 
+        ckpt_down_proj_name:    Optional[str] = None,        
+
+        # 1.3 传入在本代码中对模型参数的命名"experts.up_gate_proj_"
+        # 1.3 传入在本代码中对模型参数的命名"experts.down_proj_"
+        param_gate_up_proj_name:    Optional[str] = None, 
+        param_down_proj_name:       Optional[str] = None,
+
+        # 1.3 没传，不知道干嘛的
+        ckpt_gate_up_proj_name: Optional[str] = None,
+        ckpt_expert_key_name: str = "experts",
+        experts_offset: int = 0,
+        num_experts_start_offset: int = 0,
+    ) -> list[tuple[str, str, int, str]]:
+        # 1.1 一个空列表
+        param_name_maping = []
+
+        # 1.2 不进入这个分支
+        if ckpt_gate_up_proj_name: param_name_maping.append((None, ckpt_gate_up_proj_name))
+        
+        # 1.3 进入这个分支
+        # 1.3.1 得到列表 param_name_maping = [
+        #   ("gate",    "gate_proj" ), 
+        #   ("up",      "up_proj"   ), 
+        #   ("down",    "down_proj" ) 
+        # ]
+        if ckpt_gate_proj_name: param_name_maping.append(("gate", ckpt_gate_proj_name))
+        if ckpt_up_proj_name: param_name_maping.append(("up", ckpt_up_proj_name))
+        if ckpt_down_proj_name: param_name_maping.append(("down", ckpt_down_proj_name))
+
+        # 1.4 结果列表
+        # 1.4.1 expert_id = (0, 255)
+        # 1.4.2 对于expert_id = 0, 第一个是shard_id, 第二个是weight_name，三组"gate"+"gate_proj"
+        # 1.4.3 对于weight_name是gate, up, gate_up，都给参数取名为"experts.up_gate_proj_"
+        # 1.4.3 对于weight_name是down，               给参数取名为"experts.down_proj_"
+        # 1.4.4 列表增加一个(
+        #       代码参数名:     experts.up_gate_proj_       , 
+        #       文件参数名:     experts.0.gate_proj.        , 
+        #       专家id:        0                           ,
+        #       分片id:        gate
+        # )
+
+        # 1.4.2 对于expert_id = 0, 第一个是shard_id, 第二个是weight_name，三组"up"+"up_proj"
+        # 1.4.2 对于expert_id = 0, 第一个是shard_id, 第二个是weight_name，三组"down"+"down_proj"
+
+        # 1.4.2 对于expert_id = 1, 第一个是shard_id, 第二个是weight_name，三组"gate"+"gate_proj", "up"+"up_proj", "down"+"down_proj"
+        # 1.4.2 对于expert_id = 255, 第一个是shard_id, 第二个是weight_name，三组"gate"+"gate_proj", "up"+"up_proj", "down"+"down_proj"
+
+        # 1.4.1 最后一共增加256*3个东西
+        # 1.4.2 (代码参数名,                      文件参数名,                  专家id,  分片id  )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.0.gate_proj.    ,   0,      gate   )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.0.up_proj.      ,   0,      up     )
+        # 1.4.2 (experts.down_proj_  ,          experts.0.down_proj.    ,   0,      down   )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.1.gate_proj.    ,   1,      gate   )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.1.up_proj.      ,   1,      up     )
+        # 1.4.2 (experts.down_proj_  ,          experts.1.down_proj.    ,   1,      down   )
+        # ...
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.255.gate_proj.  ,   255,    gate   )
+        # 1.4.2 (experts.up_gate_proj_  ,       experts.255.up_proj.    ,   255,    up     )
+        # 1.4.2 (experts.down_proj_  ,          experts.255.down_proj.  ,   255,    down   )
+        # result = []
+        # for expert_id in range(experts_offset + num_experts_start_offset, experts_offset + num_experts_start_offset + num_experts):
+        #     for shard_id, weight_name in param_name_maping:
+        #         if weight_name in [ckpt_gate_proj_name, ckpt_up_proj_name, ckpt_gate_up_proj_name]:
+        #             param_name = param_gate_up_proj_name
+        #         else:
+        #             param_name = param_down_proj_name
+        #         result.append((param_name, f"{ckpt_expert_key_name}.{expert_id}.{weight_name}.", expert_id, shard_id))
+        # return result
+
+        return [
+            (
+                (
+                    param_gate_up_proj_name
+                    if weight_name in [ckpt_gate_proj_name, ckpt_up_proj_name, ckpt_gate_up_proj_name]
+                    else param_down_proj_name
+                ),
+                f"{ckpt_expert_key_name}.{expert_id}.{weight_name}.",
+                expert_id,
+                shard_id,
+            )
+            for expert_id in range(experts_offset + num_experts_start_offset, experts_offset + num_experts_start_offset + num_experts)
+            for shard_id, weight_name in param_name_maping
+        ]

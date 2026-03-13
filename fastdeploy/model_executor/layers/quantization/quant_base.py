@@ -1,45 +1,25 @@
-"""
-# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-
+# 1. 基础
+# 1.1 抽象类
+# 1.2 任何类型，Optional[int, None]选择类型
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 
+# 1. 量化方法类
+# 1.1 是所有对权重进行FP8, INT4量化的基类
 class QuantMethodBase(ABC):
-    """Base class for different quantized methods."""
-
+    # 1.1 给Transformer第5层，创建量化权重
     @abstractmethod
     def create_weights(self, layer, *weight_args, **extra_weight_attrs):
-        """Create weights for a layer.
-
-        The weights will be set as attributes of the layer."""
         raise NotImplementedError
 
+    # 1.2 使用Transformer第5层，的量化权重，参与计算
     @abstractmethod
     def apply(self, layer, *args, **kwargs):
-        """Apply the weights in layer to the input tensor.
-
-        Expects create_weights to have been called before on the layer."""
         raise NotImplementedError
 
+    # 1.3 使用Transformer第5层，加载好的权重，进行一些后处理比如矩阵转置一下
     def process_loaded_weights(self, layer, weights):
-        """Process the weight after loading.
-
-        This can be used for example, to transpose weights for computation.
-        """
         return
 
 

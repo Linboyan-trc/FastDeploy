@@ -1,39 +1,17 @@
-"""
-# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-
+# 1. 基础
+# 1.1 抽象类
 from abc import abstractmethod
 from typing import Callable
 
 import paddle
 from paddle import nn
 
-from fastdeploy.model_executor.utils import (
-    TensorTracker,
-    default_weight_loader,
-    process_weight_transpose,
-    set_weight_attrs,
-)
+from fastdeploy.model_executor.utils import (TensorTracker, default_weight_loader, process_weight_transpose, set_weight_attrs)
 from fastdeploy.platforms import current_platform
-
 from ..quantization.quant_base import QuantMethodBase
 
 
 class MoEMethodBase(QuantMethodBase):
-    """ """
-
     def __init__(self, quant_config):
         super().__init__()
         self.quant_config = quant_config
