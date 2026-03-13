@@ -14,101 +14,83 @@
 # limitations under the License.
 """
 
+# 1. 基本组件
+# 1.1 复制
+# 1.2 操作系统
+# 1.3 时间
+# 1.4 数组
+# 1.5 基本类型
 import copy
 import os
-import queue
 import time
-from concurrent.futures import Future
-from threading import Thread
+import numpy as np
 from typing import Any, Dict, List, Optional, cast
 
-import numpy as np
+# 1. 多线程组件
+# 1.1 消息队列
+# 1.2 有锁队列
+# 1.3 线程
+# 1.4 线程等待结果
+import zmq
+import queue
+from threading import Thread
+from concurrent.futures import Future
+
+# 1. Paddle
+# 1.1 nn基类
+# 1.2 日志
 import paddle
 from paddle import nn
 from paddleformers.utils.log import logger
 
+# 1. FastDeploy
+# 1.1 model_executor.model_loader的__init__py 引入 get_model_loader()
+from fastdeploy import envs
 from fastdeploy.config import FDConfig
+from fastdeploy.engine.tasks import PoolingTask
 from fastdeploy.engine.pooling_params import PoolingParams
 from fastdeploy.engine.request import ImagePosition, Request, RequestType
-from fastdeploy.model_executor.graph_optimization.utils import (
-    profile_run_guard,
-    sot_warmup_guard,
-)
-from fastdeploy.model_executor.guided_decoding import (
-    LogitsProcessorBase,
-    get_guided_backend,
-)
+from fastdeploy.input.ernie4_5_vl_processor import DataProcessor
+from fastdeploy.inter_communicator import IPCSignal, ZmqIpcClient
+from fastdeploy.logger.deterministic_logger import DeterministicLogger
+from fastdeploy.model_executor.graph_optimization.utils import (profile_run_guard, sot_warmup_guard)
+from fastdeploy.model_executor.guided_decoding import (LogitsProcessorBase, get_guided_backend)
 from fastdeploy.model_executor.layers.attention import get_attention_backend
-from fastdeploy.model_executor.layers.attention.append_attn_backend import (
-    allocate_launch_related_buffer,
-)
-from fastdeploy.model_executor.layers.attention.base_attention_backend import (
-    AttentionBackend,
-)
-from fastdeploy.model_executor.layers.moe.routing_indices_cache import (
-    RoutingReplayManager,
-)
+from fastdeploy.model_executor.layers.attention.append_attn_backend import (allocate_launch_related_buffer)
+from fastdeploy.model_executor.layers.attention.base_attention_backend import (AttentionBackend)
+from fastdeploy.model_executor.layers.moe.routing_indices_cache import (RoutingReplayManager)
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope_3d
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
 from fastdeploy.model_executor.layers.sample.sampler import Sampler, SpeculativeSampler
+from fastdeploy.model_executor.layers.pool.metadata import PoolingMetadata
 from fastdeploy.model_executor.model_loader import get_model_loader
+from fastdeploy.model_executor.models.ernie4_5_vl.modeling_resampler import ScatterOp
+from fastdeploy.model_executor.models.interfaces_base import FdModelForPooling
+from fastdeploy.model_executor.forward_meta import ForwardMeta
+from fastdeploy.output.pooler import PoolerOutput
 from fastdeploy.platforms import current_platform
 from fastdeploy.worker.input_batch import InputBatch, reorder_split_prefill_and_decode
+from fastdeploy.worker.model_runner_base import (DistributedOut, DistributedStatus, ModelRunnerBase)
+from fastdeploy.worker.output import LogprobsTensors, ModelOutputData, ModelRunnerOutput
 
 if current_platform.is_iluvatar():
-    from fastdeploy.model_executor.ops.iluvatar import (
-        recover_decode_task,
-        set_data_ipc,
-        set_value_by_flags_and_idx,
-    )
-
+    from fastdeploy.model_executor.ops.iluvatar import (recover_decode_task, set_data_ipc, set_value_by_flags_and_idx)
     share_external_data = None
 elif current_platform.is_dcu():
     from fastdeploy.model_executor.ops.gpu import set_value_by_flags_and_idx
-
     recover_decode_task = None
     share_external_data = None
 else:
-    from fastdeploy.model_executor.ops.gpu import (
-        recover_decode_task,
-        set_value_by_flags_and_idx,
-        share_external_data,
-        speculate_schedule_cache,
-        set_data_ipc,
-        unset_data_ipc,
-    )
+    from fastdeploy.model_executor.ops.gpu import (recover_decode_task, set_value_by_flags_and_idx, share_external_data, speculate_schedule_cache, set_data_ipc, unset_data_ipc)
 
-from fastdeploy.model_executor.pre_and_post_process import (
-    async_set_value,
-    post_process,
-    pre_process,
-    rebuild_padding,
-    save_output_normal,
-)
+from fastdeploy.model_executor.pre_and_post_process import (async_set_value, post_process, pre_process, rebuild_padding, save_output_normal)
 
 if not (current_platform.is_dcu() or current_platform.is_iluvatar()):
     from fastdeploy.spec_decode import MTPProposer, NgramProposer, SuffixProposer
 
-import zmq
 
-from fastdeploy import envs
-from fastdeploy.engine.tasks import PoolingTask
-from fastdeploy.input.ernie4_5_vl_processor import DataProcessor
-from fastdeploy.inter_communicator import IPCSignal, ZmqIpcClient
-from fastdeploy.logger.deterministic_logger import DeterministicLogger
-from fastdeploy.model_executor.forward_meta import ForwardMeta
-from fastdeploy.model_executor.layers.pool.metadata import PoolingMetadata
-from fastdeploy.model_executor.models.ernie4_5_vl.modeling_resampler import ScatterOp
-from fastdeploy.model_executor.models.interfaces_base import FdModelForPooling
-from fastdeploy.output.pooler import PoolerOutput
-from fastdeploy.worker.model_runner_base import (
-    DistributedOut,
-    DistributedStatus,
-    ModelRunnerBase,
-)
-from fastdeploy.worker.output import LogprobsTensors, ModelOutputData, ModelRunnerOutput
-
-
+# 1. GPU Model Runner
+# 1.1 负责加载参数
 class GPUModelRunner(ModelRunnerBase):
     def __init__(
         self,
@@ -1230,28 +1212,24 @@ class GPUModelRunner(ModelRunnerBase):
                 if self.speculative_method == "mtp":
                     self.proposer.reorder_inputs()
 
+    # 1.1 加载参数
     def load_model(self) -> None:
-        """load or download model"""
+        # 1.1 日志
         logger.info(f"Starting to load model {self.model_config.architectures[0]}")
-        # 1. Load original model
+        
+        # 1.2 获取DefaultModelLoader类实例
         model_loader = get_model_loader(load_config=self.fd_config.load_config)
+
+        # 1.3 加载模型
         self.model = model_loader.load_model(fd_config=self.fd_config)
 
-        # 2. Load lora model
-
-        # 3. Load drafter model(for speculative decoding)
-
-        # 4. Init proposer for speculative method
+        # 1.3 看不懂
         self._init_speculative_proposer()
-
-        # Load RL dynamic model
         if self.fd_config.load_config.dynamic_load_weight:
             from fastdeploy.rl.dynamic_weight_manager import DynamicWeightManager
 
             if self.fd_config.speculative_config.method == "mtp":
-                self.dynamic_weight_manager = DynamicWeightManager(
-                    self.fd_config, [self.model, self.proposer.model], self.local_rank
-                )
+                self.dynamic_weight_manager = DynamicWeightManager(self.fd_config, [self.model, self.proposer.model], self.local_rank)
             else:
                 self.dynamic_weight_manager = DynamicWeightManager(self.fd_config, self.model, self.local_rank)
 

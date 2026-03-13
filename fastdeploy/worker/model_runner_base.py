@@ -14,15 +14,24 @@
 # limitations under the License.
 """
 
+# 1. 抽象类
+# 1.1 抽象基类
+# 1.2 自动生成数据类
+# 1.3 可选类，也就是Optional[int]，和Union[int, None]效果一样
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
 
+# 1. Paddle
+# 1.1 nn基础模块
+# 1.2 fastdeploy配置
+# 1.2 fastdeploy日志
+# 1.3 fastdeploy输出
 from paddle import nn
-
 from fastdeploy.config import FDConfig
 from fastdeploy.utils import get_logger
 from fastdeploy.worker.output import ModelRunnerOutput
+
 
 logger = get_logger("model_runner_base", "model_runner_base.log")
 
@@ -39,18 +48,19 @@ class DistributedOut:
     max_moe_num_chunk: Optional[int] = None
 
 
+# 1. Model Runner Base
+# 1.1 被GPU Model Runner继承
 class ModelRunnerBase(ABC):
-    """
-    Engine -> (WIP)Executor -> Worker -> ModelRunner -> Model
-    ModelRunner interface abstracts the model execution logic that
-    contain input preparation, token generation, and tokenprocessing.
-    """
-
+    # 1.1 初始化
+    # 1.1.1 设置总配置，设置细分配置
     def __init__(self, fd_config: FDConfig, device: str) -> None:
-        """
-        Initialize FDConfig
-        """
+        # 1.1 设备
+        self.device = device
+
+        # 1.2 总配置
         self.fd_config = fd_config
+
+        # 1.3 细分配置
         self.model_config = fd_config.model_config
         self.load_config = fd_config.load_config
         self.device_config = fd_config.device_config
@@ -60,15 +70,10 @@ class ModelRunnerBase(ABC):
         self.quant_config = fd_config.quant_config
         self.cache_config = fd_config.cache_config
         self.scheduler_config = fd_config.scheduler_config
-        # ... config
 
-        self.device = device
-
+    # 1.2 子类需要实现加载模型
     @abstractmethod
     def load_model(self) -> None:
-        """
-        Load model from local path or remote(will download) path
-        """
         raise NotImplementedError
 
     @abstractmethod

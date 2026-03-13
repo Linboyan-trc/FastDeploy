@@ -1,19 +1,7 @@
-"""
-# Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-
+# 1. 基础
+# 1.1 数组
+# 1.2 给函数固定部分参数
+import numpy as np
 from functools import partial
 from typing import Callable, Optional
 
@@ -22,54 +10,37 @@ from paddle import nn
 from paddleformers.utils.log import logger
 
 from fastdeploy import envs
-from fastdeploy.distributed.communication import (
-    tensor_model_parallel_all_reduce,
-    tensor_model_parallel_all_reduce_custom,
-)
+from fastdeploy.distributed.communication import (tensor_model_parallel_all_reduce, tensor_model_parallel_all_reduce_custom)
 from fastdeploy.model_executor.forward_meta import ForwardMeta
-from fastdeploy.model_executor.layers.moe.routing_indices_cache import (
-    save_routing_to_buffer,
-)
+from fastdeploy.model_executor.layers.moe.routing_indices_cache import save_routing_to_buffer
 from fastdeploy.model_executor.layers.utils import get_tensor
 from fastdeploy.model_executor.utils import h2d_copy, slice_fn
 from fastdeploy.platforms import current_platform
 from fastdeploy.worker.experts_manager import RedundantExpertManger
 
-try:
+try: 
     from fastdeploy.model_executor.ops.gpu import noaux_tc, noaux_tc_redundant
-except:
+except: 
     logger.warning("import noaux_tc Failed!")
-import numpy as np
 
 
+# 1. 根据不同硬件返回MoE
+# 1.1 GPU返回Cutlass MoE Method
 def get_moe_method(layer=None):
-    """
-    return moe method based on device platform
-    """
-
     if current_platform.is_cuda() or current_platform.is_iluvatar():
         from .fused_moe_cutlass_backend import CutlassMoEMethod
-
         return CutlassMoEMethod(None)
     elif current_platform.is_xpu():
         from fastdeploy.model_executor.layers.backends import XPUMoEMethod
-
         return XPUMoEMethod(None, layer)
     elif current_platform.is_gcu():
         from fastdeploy.model_executor.layers.backends import GCUFusedMoeMethod
-
         return GCUFusedMoeMethod(None)
-
     elif current_platform.is_intel_hpu():
         from fastdeploy.model_executor.layers.backends import HpuMoEMethod
-
         return HpuMoEMethod(None)
-
     elif current_platform.is_maca():
-        from fastdeploy.model_executor.layers.backends import (
-            MetaxCutlassUnquantizedFusedMoEMethod,
-        )
-
+        from fastdeploy.model_executor.layers.backends import MetaxCutlassUnquantizedFusedMoEMethod
         return MetaxCutlassUnquantizedFusedMoEMethod(None)
     return None
 

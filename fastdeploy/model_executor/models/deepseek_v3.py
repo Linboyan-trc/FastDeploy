@@ -1,19 +1,3 @@
-"""
-# Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-
 # 1. Python依赖
 # 1.1 future: 延迟引用解析
 # 1.2 math: 数学
@@ -604,11 +588,7 @@ class DeepseekV3ForCausalLM(ModelForCasualLM):
         # 1.5.1 只是在实际推理中可能为了对齐之后可能加了padding使得推理中的vocab_size略大于129380
         self.ori_vocab_size = fd_config.model_config.ori_vocab_size
 
-    @classmethod
-    def name(cls):
-        """ """
-        return "DeepseekV3ForCausalLM"
-
+    # 2. Default Loader加载权重方法，直接从CPU内存填进GPU显存上的模型参数
     @paddle.no_grad()
     def set_state_dict(self, state_dict):
         """
@@ -617,36 +597,55 @@ class DeepseekV3ForCausalLM(ModelForCasualLM):
         self.model.load_state_dict(state_dict)
         self.lm_head.load_state_dict(state_dict)
 
+    # 3. Default Loader V1加载权重方法，使用weights_iterator从填进模型参数
     @paddle.no_grad()
     def load_weights(self, weights_iterator) -> None:
-        """
-        Load model parameters from a given weights_iterator object.
-        Args:
-            weights_iterator (Iterator): An iterator yielding (name, weight) pairs.
-        """
-        from fastdeploy.model_executor.utils import (
-            default_weight_loader,
-            process_weights_after_loading,
-        )
+        # 3.1 导入model_executor的工具
+        from fastdeploy.model_executor.utils import (default_weight_loader, process_weights_after_loading)
 
+        # 3.2 模型参数和.safetensors中参数映射
+        # 3.2.1 第一列param_name是指在本代码中参数的key的名称
+        # 3.2.2 第二列shard_name是指在.safetensors中参数的key的名称
+        # 3.2.3 第三列是指该参数会和其它参数合并作为一个参数，然后该参数位于合并后的参数的前半部分，或者后半部分
         stacked_params_mapping = [
-            # (param_name, shard_name, shard_id)
-            ("up_gate_proj", "gate_proj", "gate"),
-            ("up_gate_proj", "up_proj", "up"),
-            ("embed_tokens.embeddings", "embed_tokens", None),
-            ("lm_head.linear", "lm_head", None),
-            ("experts.gate_correction_bias", "gate.e_score_correction_bias", None),
-            ("qkv_a_proj_with_mqa", "q_a_proj", "q_a"),
-            ("qkv_a_proj_with_mqa", "kv_a_proj_with_mqa", "kv_a"),
+            # 3.2.1 输入层
+            # 3.2.1 模型参数中为，embed_tokens.embeddings
+            # 3.2.1 文件safetensors中为，model.embed_tokens.weight
+            ("embed_tokens.embeddings",         "embed_tokens",                 None),
+
+            # 3.2.2 Transformer第一次残差连接
+            # 没有input_layernorm
+            ("qkv_a_proj_with_mqa",             "q_a_proj",                     "q_a"),
+            ("qkv_a_proj_with_mqa",             "kv_a_proj_with_mqa",           "kv_a"),
+            # 没有q_a_layernorm
+            # 没有q_b_proj
+            # 没有kv_a_layernorm
+            # 没有kv_b_proj
+            # 没有o_proj
+
+            # 3.2.3 Transformer第二次残差连接FFN
+            # 没有post_attention_layernorm
+            ("up_gate_proj",                    "gate_proj",                    "gate"),
+            ("up_gate_proj",                    "up_proj",                      "up"),
+            # 没有down_proj
+
+            # 3.2.3 Transformer第二次残差连接MoE
+            # 没有post_attention_layernorm
+            # 没有gate打分
+            ("experts.gate_correction_bias",    "gate.e_score_correction_bias", None),
+            # 没有共享专家
+            # 没有专家自己的gate, up, down
+
+            # 3.2.4 输出层
+            # 没有norm归一化
+            ("lm_head.linear",                  "lm_head",                      None), 
         ]
+
         # (param_name, weight_name, expert_id, shard_id)
         expert_params_mapping = FusedMoE.make_expert_params_mapping(
             num_experts=self.fd_config.model_config.n_routed_experts,
-            ckpt_gate_proj_name="gate_proj",
-            ckpt_down_proj_name="down_proj",
-            ckpt_up_proj_name="up_proj",
-            param_gate_up_proj_name="experts.up_gate_proj_",
-            param_down_proj_name="experts.down_proj_",
+            ckpt_gate_proj_name="gate_proj", ckpt_up_proj_name="up_proj", ckpt_down_proj_name="down_proj",
+            param_gate_up_proj_name="experts.up_gate_proj_",  param_down_proj_name="experts.down_proj_"
         )
         params_dict = dict(self.named_parameters())
         process_weights_after_loading_fn = process_weights_after_loading(dict(self.named_sublayers()), self.fd_config)
@@ -693,7 +692,7 @@ class DeepseekV3ForCausalLM(ModelForCasualLM):
                 process_weights_after_loading_fn(kv_model_sublayer_name)
             process_weights_after_loading_fn(model_sublayer_name, param)
 
-    # 2. 词表投影；作为logits
+    # 4. 词表投影；作为logits
     def compute_logits(self, hidden_states: paddle.Tensor):
         """ """
         logits = self.lm_head(hidden_states)
@@ -753,6 +752,9 @@ class DeepseekV3ForCausalLM(ModelForCasualLM):
         """Clear graph optimization backend, the captured cuda graph will be cleaned"""
         self.model.clear_grpah_opt_backend(fd_config=self.fd_config)
 
+    @classmethod
+    def name(cls):
+        return "DeepseekV3ForCausalLM"
 
 ####################################################################################################
 # 1. 不知道有什么用
