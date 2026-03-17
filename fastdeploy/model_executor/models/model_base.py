@@ -427,17 +427,9 @@ class ModelRegistry:
         return False
 
 
+# 1. 模型基类
 class ModelForCasualLM(nn.Layer, ABC):
-    """
-    Base class for LM
-    """
-
     def __init__(self, configs):
-        """
-        Args:
-            configs (dict): Configurations including parameters such as max_dec_len, min_dec_len, decode_strategy,
-                vocab_size, use_topp_sampling, etc.
-        """
         super(ModelForCasualLM, self).__init__()
         self.fd_config = configs
 
