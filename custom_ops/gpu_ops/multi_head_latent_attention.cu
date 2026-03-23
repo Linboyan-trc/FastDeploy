@@ -1,61 +1,49 @@
-// Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
+// 1. 头文件
 #include "append_attn/decoder_mla_attention_kernel.h"
 #include "helper.h"
 #include "mla_attn/batch_mla_with_paged_kv_cache.h"
 
 template <paddle::DataType D>
 std::vector<paddle::Tensor> MultiHeadLatentAttentionKernel(
-    const AppendAttnMetaData& meta_data,
-    const paddle::Tensor& query,
-    const paddle::Tensor& key_cache,
-    const paddle::Tensor& value_cache,
-    const paddle::Tensor& seq_lens_decoder,
-    const paddle::Tensor& seq_lens_this_time,
-    const paddle::Tensor& cu_seqlens_q,
-    const paddle::Tensor& batch_id_per_token,
-    const paddle::Tensor& block_tables,
-    const paddle::Tensor& kv_batch_ids,
-    const paddle::Tensor& kv_tile_ids_per_batch,
-    const paddle::Tensor& kv_num_blocks,
-    const paddle::Tensor& decoder_batch_ids,
-    const paddle::Tensor& decoder_tile_ids_per_batch,
-    const paddle::Tensor& decoder_num_blocks,
-    const paddle::Tensor& decoder_chunk_size_device,
-    const paddle::Tensor& max_dec_len_this_time,
-    const paddle::Tensor& max_len_kv,
-    const paddle::optional<paddle::Tensor>& attn_mask,
-    const paddle::optional<paddle::Tensor>& query_bias,
-    const paddle::optional<paddle::Tensor>& query_out_scales,
-    const paddle::optional<paddle::Tensor>& cache_k_quant_scales,
-    const paddle::optional<paddle::Tensor>& cache_v_quant_scales,
-    const paddle::optional<paddle::Tensor>& cache_k_dequant_scales,
-    const paddle::optional<paddle::Tensor>& cache_v_dequant_scales,
-    const paddle::optional<paddle::Tensor>& cache_k_zp,
-    const paddle::optional<paddle::Tensor>& cache_v_zp,
-    const paddle::optional<paddle::Tensor>& out_linear_shifts,
-    const paddle::optional<paddle::Tensor>& out_linear_smooths,
-    const std::string& cache_quant_type_str,
-    const int max_input_length,
-    const float softmax_scale,
-    const float quant_max_bound,
-    const float quant_min_bound,
-    const float out_linear_in_scale,
-    const int speculate_max_draft_token_num,
-    const bool causal,
-    const bool speculate_decoder) {
+  const AppendAttnMetaData& meta_data,
+  const paddle::Tensor& query,
+  const paddle::Tensor& key_cache,
+  const paddle::Tensor& value_cache,
+  const paddle::Tensor& seq_lens_decoder,
+  const paddle::Tensor& seq_lens_this_time,
+  const paddle::Tensor& cu_seqlens_q,
+  const paddle::Tensor& batch_id_per_token,
+  const paddle::Tensor& block_tables,
+  const paddle::Tensor& kv_batch_ids,
+  const paddle::Tensor& kv_tile_ids_per_batch,
+  const paddle::Tensor& kv_num_blocks,
+  const paddle::Tensor& decoder_batch_ids,
+  const paddle::Tensor& decoder_tile_ids_per_batch,
+  const paddle::Tensor& decoder_num_blocks,
+  const paddle::Tensor& decoder_chunk_size_device,
+  const paddle::Tensor& max_dec_len_this_time,
+  const paddle::Tensor& max_len_kv,
+  const paddle::optional<paddle::Tensor>& attn_mask,
+  const paddle::optional<paddle::Tensor>& query_bias,
+  const paddle::optional<paddle::Tensor>& query_out_scales,
+  const paddle::optional<paddle::Tensor>& cache_k_quant_scales,
+  const paddle::optional<paddle::Tensor>& cache_v_quant_scales,
+  const paddle::optional<paddle::Tensor>& cache_k_dequant_scales,
+  const paddle::optional<paddle::Tensor>& cache_v_dequant_scales,
+  const paddle::optional<paddle::Tensor>& cache_k_zp,
+  const paddle::optional<paddle::Tensor>& cache_v_zp,
+  const paddle::optional<paddle::Tensor>& out_linear_shifts,
+  const paddle::optional<paddle::Tensor>& out_linear_smooths,
+  const std::string& cache_quant_type_str,
+  const int max_input_length,
+  const float softmax_scale,
+  const float quant_max_bound,
+  const float quant_min_bound,
+  const float out_linear_in_scale,
+  const int speculate_max_draft_token_num,
+  const bool causal,
+  const bool speculate_decoder
+) {
   typedef PDTraits<D> traits_;
   typedef typename traits_::data_t data_t;
 
@@ -76,64 +64,63 @@ std::vector<paddle::Tensor> MultiHeadLatentAttentionKernel(
 
   auto main_stream = query.stream();
 
-  paddle::Tensor fmha_out = paddle::full(
-      {meta_data.token_nums, meta_data.q_num_heads * meta_data.head_dims_v},
-      0,
-      D,
-      query.place());
+  paddle::Tensor fmha_out = paddle::full({meta_data.token_nums, meta_data.q_num_heads * meta_data.head_dims_v}, 0, D, query.place());
 
   if (max_dec_len_this_time_data > 0) {
-    if (mla_use_tensorcore) {
-      BatchMLAWithPagedKVCacheKernel<data_t>(meta_data,
-                                             query,
-                                             key_cache,
-                                             attn_mask,
-                                             cache_k_dequant_scales,
-                                             cache_v_dequant_scales,
-                                             cache_k_zp,
-                                             cache_v_zp,
-                                             out_linear_shifts,
-                                             out_linear_smooths,
-                                             seq_lens_this_time,
-                                             seq_lens_decoder,
-                                             cu_seqlens_q,
-                                             batch_id_per_token,
-                                             block_tables,
-                                             decoder_batch_ids,
-                                             decoder_tile_ids_per_batch,
-                                             decoder_num_blocks,
-                                             cache_quant_type_str,
-                                             decoder_chunk_size_device,
-                                             max_input_length,
-                                             softmax_scale,
-                                             quant_max_bound,
-                                             quant_min_bound,
-                                             out_linear_in_scale,
-                                             speculate_max_draft_token_num,
-                                             causal,
-                                             main_stream,
-                                             &fmha_out);
+    if (mla_use_tensorcore) { 
+      BatchMLAWithPagedKVCacheKernel<data_t>(
+        meta_data,
+        query,
+        key_cache,
+        attn_mask,
+        cache_k_dequant_scales,
+        cache_v_dequant_scales,
+        cache_k_zp,
+        cache_v_zp,
+        out_linear_shifts,
+        out_linear_smooths,
+        seq_lens_this_time,
+        seq_lens_decoder,
+        cu_seqlens_q,
+        batch_id_per_token,
+        block_tables,
+        decoder_batch_ids,
+        decoder_tile_ids_per_batch,
+        decoder_num_blocks,
+        cache_quant_type_str,
+        decoder_chunk_size_device,
+        max_input_length,
+        softmax_scale,
+        quant_max_bound,
+        quant_min_bound,
+        out_linear_in_scale,
+        speculate_max_draft_token_num,
+        causal,
+        main_stream,
+        &fmha_out
+      );
     } else {
       DecodeMLAAttentionKernel<data_t>(
-          meta_data,
-          query,  // [token_num, num_heads, head_dim]
-          key_cache,
-          value_cache,
-          attn_mask,
-          out_linear_shifts,
-          out_linear_smooths,
-          seq_lens_this_time,  // q_seq_len is 1
-          seq_lens_decoder,
-          batch_id_per_token,
-          cu_seqlens_q,
-          block_tables,
-          max_input_length,
-          max_len_kv_data,
-          softmax_scale,
-          out_linear_in_scale,
-          causal,
-          main_stream,
-          &fmha_out);
+        meta_data,
+        query,  // [token_num, num_heads, head_dim]
+        key_cache,
+        value_cache,
+        attn_mask,
+        out_linear_shifts,
+        out_linear_smooths,
+        seq_lens_this_time,  // q_seq_len is 1
+        seq_lens_decoder,
+        batch_id_per_token,
+        cu_seqlens_q,
+        block_tables,
+        max_input_length,
+        max_len_kv_data,
+        softmax_scale,
+        out_linear_in_scale,
+        causal,
+        main_stream,
+        &fmha_out
+      );
     }
   }
   return {fmha_out};
@@ -178,7 +165,8 @@ std::vector<paddle::Tensor> MultiHeadLatentAttention(
     const float out_linear_in_scale,
     const int speculate_max_draft_token_num,
     const bool causal,
-    const bool speculate_decoder) {
+    const bool speculate_decoder
+){
   AppendAttnMetaData meta_data;
 
   const auto& query_dims = query.dims();
@@ -197,85 +185,87 @@ std::vector<paddle::Tensor> MultiHeadLatentAttention(
   switch (query.dtype()) {
     case paddle::DataType::BFLOAT16: {
       return MultiHeadLatentAttentionKernel<paddle::DataType::BFLOAT16>(
-          meta_data,
-          query,
-          key_cache,
-          value_cache,
-          seq_lens_decoder,
-          seq_lens_this_time,
-          cu_seqlens_q,
-          batch_id_per_token,
-          block_tables,
-          kv_batch_ids,
-          kv_tile_ids_per_batch,
-          kv_num_blocks,
-          decoder_batch_ids,
-          decoder_tile_ids_per_batch,
-          decoder_num_blocks,
-          decoder_chunk_size_device,
-          max_dec_len_this_time,
-          max_len_kv,
-          attn_mask,
-          query_bias,
-          query_out_scales,
-          cache_k_quant_scales,
-          cache_v_quant_scales,
-          cache_k_dequant_scales,
-          cache_v_dequant_scales,
-          cache_k_zp,
-          cache_v_zp,
-          out_linear_shifts,
-          out_linear_smooths,
-          cache_quant_type_str,
-          max_input_length,
-          softmax_scale,
-          quant_max_bound,
-          quant_min_bound,
-          out_linear_in_scale,
-          speculate_max_draft_token_num,
-          causal,
-          speculate_decoder);
+        meta_data,
+        query,
+        key_cache,
+        value_cache,
+        seq_lens_decoder,
+        seq_lens_this_time,
+        cu_seqlens_q,
+        batch_id_per_token,
+        block_tables,
+        kv_batch_ids,
+        kv_tile_ids_per_batch,
+        kv_num_blocks,
+        decoder_batch_ids,
+        decoder_tile_ids_per_batch,
+        decoder_num_blocks,
+        decoder_chunk_size_device,
+        max_dec_len_this_time,
+        max_len_kv,
+        attn_mask,
+        query_bias,
+        query_out_scales,
+        cache_k_quant_scales,
+        cache_v_quant_scales,
+        cache_k_dequant_scales,
+        cache_v_dequant_scales,
+        cache_k_zp,
+        cache_v_zp,
+        out_linear_shifts,
+        out_linear_smooths,
+        cache_quant_type_str,
+        max_input_length,
+        softmax_scale,
+        quant_max_bound,
+        quant_min_bound,
+        out_linear_in_scale,
+        speculate_max_draft_token_num,
+        causal,
+        speculate_decoder
+      );
     }
     case paddle::DataType::FLOAT16: {
       return MultiHeadLatentAttentionKernel<paddle::DataType::FLOAT16>(
-          meta_data,
-          query,
-          key_cache,
-          value_cache,
-          seq_lens_decoder,
-          seq_lens_this_time,
-          cu_seqlens_q,
-          batch_id_per_token,
-          block_tables,
-          kv_batch_ids,
-          kv_tile_ids_per_batch,
-          kv_num_blocks,
-          decoder_batch_ids,
-          decoder_tile_ids_per_batch,
-          decoder_num_blocks,
-          decoder_chunk_size_device,
-          max_dec_len_this_time,
-          max_len_kv,
-          attn_mask,
-          query_bias,
-          query_out_scales,
-          cache_k_quant_scales,
-          cache_v_quant_scales,
-          cache_k_dequant_scales,
-          cache_v_dequant_scales,
-          cache_k_zp,
-          cache_v_zp,
-          out_linear_shifts,
-          out_linear_smooths,
-          cache_quant_type_str,
-          max_input_length,
-          softmax_scale,
-          quant_max_bound,
-          quant_min_bound,
-          out_linear_in_scale,
-          speculate_max_draft_token_num,
-          causal,
-          speculate_decoder);
+        meta_data,
+        query,
+        key_cache,
+        value_cache,
+        seq_lens_decoder,
+        seq_lens_this_time,
+        cu_seqlens_q,
+        batch_id_per_token,
+        block_tables,
+        kv_batch_ids,
+        kv_tile_ids_per_batch,
+        kv_num_blocks,
+        decoder_batch_ids,
+        decoder_tile_ids_per_batch,
+        decoder_num_blocks,
+        decoder_chunk_size_device,
+        max_dec_len_this_time,
+        max_len_kv,
+        attn_mask,
+        query_bias,
+        query_out_scales,
+        cache_k_quant_scales,
+        cache_v_quant_scales,
+        cache_k_dequant_scales,
+        cache_v_dequant_scales,
+        cache_k_zp,
+        cache_v_zp,
+        out_linear_shifts,
+        out_linear_smooths,
+        cache_quant_type_str,
+        max_input_length,
+        softmax_scale,
+        quant_max_bound,
+        quant_min_bound,
+        out_linear_in_scale,
+        speculate_max_draft_token_num,
+        causal,
+        speculate_decoder
+      );
     }
     default: {
       PD_THROW(
@@ -325,7 +315,8 @@ std::vector<std::vector<int64_t>> MultiHeadLatentAttentionInferShape(
     const float out_linear_in_scale,
     const int speculate_max_draft_token_num,
     const bool causal,
-    const bool speculate_decoder) {
+    const bool speculate_decoder
+) {
   const int token_num = query_shape[0];
   const int kv_num_heads = key_cache_shape[1];
   const int head_dim_qk = key_cache_shape[3];
@@ -374,7 +365,8 @@ std::vector<paddle::DataType> MultiHeadLatentAttentionInferDtype(
     const float out_linear_in_scale,
     const int speculate_max_draft_token_num,
     const bool causal,
-    const bool speculate_decoder) {
+    const bool speculate_decoder
+) {
   if (compute_dtype == "bf16") {
     return {paddle::DataType::BFLOAT16};
   } else if (compute_dtype == "fp16") {
